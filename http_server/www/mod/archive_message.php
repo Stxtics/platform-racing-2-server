@@ -1,39 +1,34 @@
 <?php
 
-require_once HTTP_FNS . '/all_fns.php';
-require_once HTTP_FNS . '/output_fns.php';
-require_once QUERIES_DIR . '/staff/actions/mod_action_insert.php';
-require_once QUERIES_DIR . '/messages_reported/messages_reported_archive.php';
+require_once('../../fns/all_fns.php');
+require_once('../../fns/output_fns.php');
 
-$message_id = (int) default_get('message_id', 0);
-$ip = get_ip();
-$ret = new stdClass();
+$message_id = find('message_id');
+$safe_message_id = addslashes($message_id);
 
-try {
-    // rate limiting
-    rate_limit('mod-archive-message-'.$ip, 3, 2);
 
-    // connect
-    $pdo = pdo_connect();
+	//connect
+	$db = new DB();	
 
-    // make sure you're a moderator
-    $mod = check_moderator($pdo);
 
-    // archive the message
-    messages_reported_archive($pdo, $message_id);
+	//make sure you're a moderator
+	$mod = check_moderator($db);
+	
+	//look for a player with provided name
+	$result = $db->query("update messages_reported
+							set archived = 1
+							where message_id = '$safe_message_id'
+							LIMIT 1");
+	if(!$result) {
+		throw new Exception('Could not mark message as archived.');
+	}
 
-    // record the change
-    $mod_id = $mod->user_id;
-    $mod_name = $mod->name;
-    mod_action_insert($pdo, $mod_id, "$mod_name archived the report of PM $message_id from $ip.", 0, $ip);
+	//action log
+	$name = $mod->name;
+	$ip = $mod->ip;
+		
+	//record the change
+	$db->call('mod_action_insert', array($mod->user_id, "$name archived the report of PM $safe_message_id from $ip", $mod->user_id, $ip));
+	
 
-    // tell the sorry saps trying to debug
-    $ret->success = true;
-    $ret->message_id = $message_id;
-} catch (Exception $e) {
-    $ret->success = false;
-    $ret->error = $e->getMessage();
-    $ret->message_id = $message_id;
-} finally {
-    echo json_encode($ret);
-}
+?>

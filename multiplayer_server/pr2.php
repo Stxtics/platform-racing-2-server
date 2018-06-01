@@ -1,83 +1,84 @@
 <?php
 
-namespace pr2\multi;
-
 ini_set('mbstring.func_overload', '0');
 ini_set('output_handler', '');
 error_reporting(E_ALL | E_STRICT);
 @ob_end_flush();
 set_time_limit(0);
 
-// env
-require_once __DIR__ . '/../config.php';
+require_once(__DIR__ . '/../env.php');
 
-require_once COMMON_DIR . '/multi_queries.php';
-require_once SOCKET_DAEMON_FILES;
+require_once(__DIR__ . '/fns/DB.php');
+require_once(__DIR__ . '/fns/db_fns.php');
+require_once(__DIR__ . '/fns/data_fns.php');
+require_once(__DIR__ . '/fns/announce_tournament.php');
+require_once(__DIR__ . '/fns/issue_tournament.php');
+require_once(__DIR__ . '/fns/sort_chat_room_array.php');
+require_once(__DIR__ . '/fns/shutdown_server.php');
+require_once(__DIR__ . '/fns/utils.php');
+require_once(__DIR__ . '/fns/vault.php');
 
-require_once PR2_FNS_DIR . '/data_fns.php';
-require_once PR2_FNS_DIR . '/utils.php';
-require_once PR2_FNS_DIR . '/process_fns.php';
+require_once(__DIR__ . '/socket/socket.php');
 
-require_once PR2_FNS_DIR . '/artifact_fns.php';
-require_once PR2_FNS_DIR . '/tournament_fns.php';
-require_once PR2_FNS_DIR . '/vault_fns.php';
+require_once(__DIR__ . '/client/become_process.php');
+require_once(__DIR__ . '/client/check_status.php');
+require_once(__DIR__ . '/client/close.php');
+require_once(__DIR__ . '/client/ingame.php');
+require_once(__DIR__ . '/client/lobby.php');
+require_once(__DIR__ . '/client/moderation.php');
+require_once(__DIR__ . '/client/ping.php');
+require_once(__DIR__ . '/client/request_login_id.php');
 
-require_once PR2_FNS_DIR . '/client/client_misc_fns.php';
-require_once PR2_FNS_DIR . '/client/ingame.php';
-require_once PR2_FNS_DIR . '/client/lobby.php';
-require_once PR2_FNS_DIR . '/client/moderation.php';
+require_once(__DIR__ . '/process/check_status.php');
+require_once(__DIR__ . '/process/register_login.php');
+require_once(__DIR__ . '/process/send_message_to_player.php');
+require_once(__DIR__ . '/process/shut_down.php');
+require_once(__DIR__ . '/process/start_new_day.php');
+require_once(__DIR__ . '/process/unlock_super_booster.php');
+require_once(__DIR__ . '/process/update_cycle.php');
+require_once(__DIR__ . '/process/vault.php');
 
-require_once PR2_FNS_DIR . '/staff/demod.php';
-require_once PR2_FNS_DIR . '/staff/promote_to_moderator.php';
-require_once PR2_FNS_DIR . '/staff/server_owner.php';
+require_once(__DIR__ . '/loadup.php');
+require_once(__DIR__ . '/socket_server.php');
+require_once(__DIR__ . '/Player.php');
+require_once(__DIR__ . '/CourseBox.php');
+require_once(__DIR__ . '/ChatMessage.php');
+require_once(__DIR__ . '/GuildPoints.php');
+require_once(__DIR__ . '/HappyHour.php');
+require_once(__DIR__ . '/RaceStats.php');
+require_once(__DIR__ . '/Hat.php');
+require_once(__DIR__ . '/LocalBans.php');
+require_once(__DIR__ . '/LoiterDetector.php');
+require_once(__DIR__ . '/TemporaryItems.php');
+require_once(__DIR__ . '/Perks.php');
+require_once(__DIR__ . '/RankupCalculator.php');
 
-require_once PR2_ROOT . '/Artifact.php';
-require_once PR2_ROOT . '/loadup.php';
-require_once PR2_ROOT . '/Player.php';
-require_once PR2_ROOT . '/PR2SocketServer.php';
-require_once PR2_ROOT . '/PR2Client.php';
-require_once PR2_ROOT . '/CourseBox.php';
-require_once PR2_ROOT . '/ChatMessage.php';
-require_once PR2_ROOT . '/GuildPoints.php';
-require_once PR2_ROOT . '/HappyHour.php';
-require_once PR2_ROOT . '/RaceStats.php';
-require_once PR2_ROOT . '/Hat.php';
-require_once PR2_ROOT . '/LocalBans.php';
-require_once PR2_ROOT . '/LoiterDetector.php';
-require_once PR2_ROOT . '/TemporaryItems.php';
-require_once PR2_ROOT . '/Perks.php';
-require_once PR2_ROOT . '/RankupCalculator.php';
+require_once(__DIR__ . '/parts/Bodies.php');
+require_once(__DIR__ . '/parts/Feet.php');
+require_once(__DIR__ . '/parts/Hats.php');
+require_once(__DIR__ . '/parts/Heads.php');
+require_once(__DIR__ . '/parts/Prize.php');
+require_once(__DIR__ . '/parts/Prizes.php');
 
-require_once PR2_ROOT . '/parts/Bodies.php';
-require_once PR2_ROOT . '/parts/Feet.php';
-require_once PR2_ROOT . '/parts/Hats.php';
-require_once PR2_ROOT . '/parts/Heads.php';
-require_once PR2_ROOT . '/parts/Prize.php';
-require_once PR2_ROOT . '/parts/Prizes.php';
-
-require_once PR2_ROOT . '/rooms/Room.php';
-require_once PR2_ROOT . '/rooms/LevelListRoom.php';
-require_once PR2_ROOT . '/rooms/ChatRoom.php';
-require_once PR2_ROOT . '/rooms/Game.php';
-require_once PR2_ROOT . '/rooms/modes/deathmatch.php';
-require_once PR2_ROOT . '/rooms/modes/eggs.php';
-require_once PR2_ROOT . '/rooms/modes/objective.php';
-require_once PR2_ROOT . '/rooms/modes/race.php';
-
-output("Initializing startup...");
+require_once(__DIR__ . '/rooms/Room.php');
+require_once(__DIR__ . '/rooms/LevelListRoom.php');
+require_once(__DIR__ . '/rooms/ChatRoom.php');
+require_once(__DIR__ . '/rooms/Game.php');
+require_once(__DIR__ . '/rooms/modes/deathmatch.php');
+require_once(__DIR__ . '/rooms/modes/eggs.php');
+require_once(__DIR__ . '/rooms/modes/objective.php');
+require_once(__DIR__ . '/rooms/modes/race.php');
 
 Prizes::init();
 RankupCalculator::init();
-HappyHour::$random_hour = rand(0, 36);
+
 
 $server_id = (int) $argv[1];
 
 $port = 0;
 $server_name = '';
-$uptime = '';
 $guild_id = 0;
 $guild_owner = 0;
-$server_expire_time = '';
 $key = '';
 
 $login_array = array();
@@ -97,16 +98,21 @@ $search_room = new LevelListRoom();
 $max_players = 200;
 $min_version = .60;
 
-$pdo = pdo_connect();
+$db;
 
-// load in startup info
-output('Requesting loadup information...');
-begin_loadup($server_id);
 
-// start the socket server
-$date = date('r');
-output("Starting PR2 server $server_name (ID: #$server_id) on port $port...");
-$daemon = new \chabot\SocketDaemon();
-$server = $daemon->createServer('\pr2\multi\PR2SocketServer', '\pr2\multi\PR2Client', 0, $port);
-output("Success! Server started on $date.");
+//load in startup info
+output('requesting startup info...');
+begin_loadup( $server_id );
+
+
+
+//start the socket server
+$date = date( 'r' );
+output( "Starting pr2 server $server_name on port $port at on $date." );
+$daemon = new socketDaemon();
+$server = $daemon->create_server('pr2_server', 'pr2_server_client', 0, $port);
 $daemon->process();
+
+
+?>
