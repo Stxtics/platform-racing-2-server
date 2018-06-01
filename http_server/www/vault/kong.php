@@ -2,66 +2,47 @@
 
 header("Content-type: text/plain");
 
-require_once(__DIR__ . '/kong_order_placed.php');
-require_once(__DIR__ . '/kong_order_request.php');
-require_once(__DIR__ . '/vault_descriptions.php');
-require_once(__DIR__ . '/../../fns/all_fns.php');
+require_once HTTP_FNS . '/all_fns.php';
+require_once HTTP_FNS . '/pages/vault/kong_order_placed.php';
+require_once HTTP_FNS . '/pages/vault/kong_order_request.php';
+require_once HTTP_FNS . '/pages/vault/vault_fns.php';
+
+require_once QUERIES_DIR . '/guilds/guild_select.php';
+require_once QUERIES_DIR . '/messages/message_insert.php';
+require_once QUERIES_DIR . '/purchases/purchase_insert.php';
+require_once QUERIES_DIR . '/rank_token_rentals/rank_token_rentals_count.php';
+require_once QUERIES_DIR . '/rank_token_rentals/rank_token_rental_insert.php';
+require_once QUERIES_DIR . '/servers/server_select.php';
+require_once QUERIES_DIR . '/servers/server_select_by_guild_id.php';
+require_once QUERIES_DIR . '/servers/server_insert.php';
+require_once QUERIES_DIR . '/servers/server_update_expire_date.php';
+require_once QUERIES_DIR . '/servers/servers_select.php';
+require_once QUERIES_DIR . '/servers/servers_select_highest_port.php';
+require_once QUERIES_DIR . '/users/user_select_expanded.php';
+
 
 try {
+    //--- parse the incoming message
+    $encrypted_request = $_POST['signed_request'];
+    $request = parse_signed_request($encrypted_request, $KONG_API_PASS);
 
-	//--- parse the incoming message
-	$encrypted_request = $_POST['signed_request'];
-	$request = parse_signed_request( $encrypted_request, $KONG_API_PASS );
+    //--- connect
+    $pdo = pdo_connect();
 
-	//--- connect
-	$db = new DB();
+    //---
+    $event = $request->event;
+    if ($event == 'item_order_request') {
+        $reply = order_request_handler($pdo, $request);
+    }
+    if ($event == 'item_order_placed') {
+        $reply = order_placed_handler($pdo, $request);
+    }
 
-	//---
-	$event = $request->event;
-	if( $event == 'item_order_request' ) {
-		$reply = order_request_handler( $db, $request );
-	}
-	if( $event == 'item_order_placed' ) {
-		$reply = order_placed_handler( $db, $request );
-	}
-
-	//---
-	echo json_encode($reply);
+    //---
+    echo json_encode($reply);
+} catch (Exception $e) {
+    $r = new stdClass();
+    $r->error = $e->getMessage();
+    error_log('caught error: ' . $r->error);
+    echo json_encode($r);
 }
-
-catch(Exception $e) {
-	$r = new stdClass();
-	$r->error = $e->getMessage();
-	error_log( 'caught error: ' . $r->error);
-	echo json_encode( $r );
-}
-
-
-
-
-//---
-function parse_signed_request($signed_request, $secret) {
-  list($encoded_sig, $payload) = explode('.', $signed_request, 2);
-
-  // decode the data
-  $sig = base64_url_decode($encoded_sig);
-  $data = json_decode(base64_url_decode($payload));
-
-  if (strtoupper($data->algorithm) !== 'HMAC-SHA256') {
-    throw new Exception('Unknown algorithm. Expected HMAC-SHA256');
-  }
-
-  // check sig
-  $expected_sig = hash_hmac('sha256', $payload, $secret, $raw = true);
-  if ($sig !== $expected_sig) {
-    throw new Exception('Bad Signed JSON signature!');
-  }
-
-  return $data;
-}
-
-function base64_url_decode($input) {
-  return base64_decode(strtr($input, '-_', '+/'));
-}
-
-?>

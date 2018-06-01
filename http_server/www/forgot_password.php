@@ -1,103 +1,102 @@
 <?php
 
-require_once('../fns/all_fns.php');
-require_once('../fns/to_hash.php');
+header("Content-type: text/plain");
 
+require_once HTTP_FNS . '/all_fns.php';
+require_once HTTP_FNS . '/rand_crypt/to_hash.php';
+require_once QUERIES_DIR . '/users/user_select_by_name.php';
+require_once QUERIES_DIR . '/users/user_update_temp_pass.php';
 
 $name = $_POST['name'];
-$email = $_POST['email'];
+$ip = get_ip();
 
-$safe_name = addslashes($name);
-$safe_email = addslashes($email);
+// sanitize email
+$problematic_chars = array('&', '"', "'", "<", ">");
+$email = str_replace($problematic_chars, '', $_POST['email']);
 
+try {
+    // check for post
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        throw new Exception("Invalid request method.");
+    }
 
-try{
+    // check referrer
+    require_trusted_ref('request a new password');
 
-	if(!valid_email($email)){
-		throw new Exception("'" . htmlspecialchars($email) . "' is not a valid email address.");
-	}
-	if(strtolower($name) == 'jiggmin') {
-		throw new Exception('The password to Jiggmin\'s luggage is 12345.');
-	}
+    // rate limiting
+    rate_limit('forgot-password-attempt-'.$ip, 5, 1);
 
-	$db = new DB();
+    // sanity check: is it a valid email address?
+    if (!valid_email($email)) {
+        $email = htmlspecialchars($email);
+        throw new Exception("\"$email\" is not a valid email address.");
+    }
 
+    // easter egg: Jiggmin's luggage
+    if (strtolower($name) == 'jiggmin') {
+        throw new Exception("The password to Jiggmin's luggage is 12345.");
+    }
 
-	//--- get thier user id -----------------------------------------------------------------
-	$result = $db->query("select user_id
-									from users
-									where email = '$safe_email'
-									and name = '$safe_name'
-									limit 0, 1");
+    // connect to the db
+    $pdo = pdo_connect();
 
-	if(!$result){
-		throw new Exception('Could not get your id from the database.');
-	}
-	if($result->num_rows <= 0){
-		throw new Exception('No account was found with the username "' . htmlspecialchars($name) . '" and the email address "' . htmlspecialchars($email) . '".');
-	}
-	if($result->num_rows > 1){
-		throw new Exception('More than one result was returned. Something has gone horribly wrong, probably the world is about to explode.');
-	}
+    // load the user account
+    $user = user_select_by_name($pdo, $name);
+    if ($user->power <= 0) {
+        throw new Exception("Guests don't have accounts to recover. Try creating your own account.");
+    }
 
+    // the email must match
+    if (strtolower($user->email) !== strtolower($email)) {
+        $name = htmlspecialchars($name);
+        $email = htmlspecialchars($email);
+        throw new Exception("No account was found with the username \"$name\" and the email address \"$email\".");
+    }
 
+    // get the user id
+    $user_id = $user->user_id;
 
-	//--- give them a new pass -----------------------------------------------------------------------
-	$row = $result->fetch_object();
-	$user_id = $row->user_id;
+    // more rate limiting
+    rate_limit('forgot-password-'.$user_id, 900, 1, 'You may only request a new password once every 15 minutes.');
 
-	$pass = random_str(12);
-	$pass_hash = to_hash($pass);
-	$safe_pass_hash = addslashes($pass_hash);
+    // give them a new pass
+    $pass = random_str(12);
+    $pass_hash = to_hash($pass);
+    user_update_temp_pass($pdo, $user_id, $pass_hash);
 
-	$result = $db->query("update users
-									set temp_pass_hash = '$safe_pass_hash'
-									where user_id = '$user_id'");
-	if(!$result){
-		throw new Exception('Could not update your password.');
-	}
+    // --- email them their new pass --- \\
+    include 'Mail.php';
 
+    $recipient = $user->email;
 
+    $headers = array();
+    $headers['From']    = 'Fred the Giant Cactus <contact@jiggmin.com>';
+    $headers['To']      = $recipient;
+    $headers['Subject'] = 'A password and chocolates from PR2';
 
-	//--- email them their new pass ---------------------------------------------------------------------
-	include('Mail.php');
+    $body = "Hi $name,\n\n"
+                ."It seems you forgot your password. Here's a new one: $pass\n\n"
+                ."If you didn't request this email, then just ignore it. "
+                ."Your old password will still work as long as you don't log in with this one.\n\n"
+                ."All the best,\n"
+                ."Fred";
 
-	$recipients = $email;
+    // Define SMTP Parameters
+    $params['host'] = $EMAIL_HOST;
+    $params['port'] = '465';
+    $params['auth'] = 'PLAIN';
+    $params['username'] = $EMAIL_USER;
+    $params['password'] = $EMAIL_PASS;
 
-	$headers = array();
-	$headers['From']    = 'Fred the Giant Cactus <contact@jiggmin.com>';
-	$headers['To']      = $email;
-	$headers['Subject'] = 'A password and chocolates from PR2';
+    // Create the mail object using the Mail::factory method
+    $mail_object = Mail::factory('smtp', $params);
 
-	$body = "Hi $name,\n\n"
-				."It seems you forgot your password. Here's a new one: $pass\n\n"
-				."If you didn't request this email, then just ignore it. Your old password will still work as long as you don't log in with this one.";
+    // Send the message
+    $mail_object->send($recipient, $headers, $body);
 
-	// Define SMTP Parameters
-	$params['host'] = $EMAIL_HOST;
-	$params['port'] = '465';
-	$params['auth'] = 'PLAIN';
-	$params['username'] = $EMAIL_USER;
-	$params['password'] = $EMAIL_PASS;
-
-	// Create the mail object using the Mail::factory method
-	$mail_object =& Mail::factory('smtp', $params);
-
-	// Send the message
-	$mail_object->send($recipients, $headers, $body);
-
-
-
-
-	//--- output what is hopefully success!
-	echo 'message=Great success! You should receive an email with your new password shortly.';
-
-
+    // tell the world
+    echo 'message=Great success! You should receive an email with your new password shortly.';
+} catch (Exception $e) {
+    $error = $e->getMessage();
+    echo "error=$error";
 }
-catch(Exception $e){
-	echo 'error='.$e->getMessage();
-	exit();
-}
-
-
-?>

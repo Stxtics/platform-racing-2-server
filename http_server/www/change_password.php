@@ -1,52 +1,61 @@
 <?php
 
-require_once('../fns/all_fns.php');
-require_once('../fns/to_hash.php');
+header("Content-type: text/plain");
 
+require_once HTTP_FNS . '/all_fns.php';
+require_once HTTP_FNS . '/rand_crypt/to_hash.php';
+require_once QUERIES_DIR . '/users/user_update_pass.php';
+
+// make some variables
 $name = $_POST['name'];
 $old_pass = $_POST['old_pass'];
 $new_pass = $_POST['new_pass'];
+$ip = get_ip();
 
-$safe_name = addslashes($name);
-$safe_old_pass = addslashes($old_pass);
-$safe_new_pass = addslashes($new_pass);
+try {
+    // check request method
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        throw new Exception("Invalid request method.");
+    }
 
-try{
+    // check referrer
+    require_trusted_ref('change your password');
 
-	if(strlen($new_pass) <= 0){
-		throw new Exception('You must enter a password, silly person.');
-	}
+    // sanity check: was a password entered?
+    if (strlen($new_pass) <= 0) {
+        throw new Exception('You must enter a password, silly person.');
+    }
 
-	$db = new DB();
+    // rate limiting
+    rate_limit(
+        'password-change-attempt-'.$ip,
+        5,
+        1,
+        'Please wait at least 5 seconds before trying to change your password again.'
+    );
 
-	//check thier login
-	$login = pass_login($db, $name, $old_pass);
+    // connect
+    $pdo = pdo_connect();
 
-	//ignore this if they are a guest
-	$power = $login->power;
-	if($power < 1){
-		throw new Exception('Guests don\'t even really have passwords...');
-	}
+    // check their login
+    $login = pass_login($pdo, $name, $old_pass);
 
-	//change thier pass
-	$pass_hash = to_hash($new_pass);
-	$safe_pass_hash = addslashes($pass_hash);
-	$result = $db->query("update users
-		set pass_hash = '$safe_pass_hash'
-		where name = '$safe_name'");
+    // make sure guests aren't getting any funny ideas
+    $power = $login->power;
+    if ($power < 1) {
+        throw new Exception('Guests don\'t even really have passwords...');
+    }
 
-	if(!$result){
-		throw new Exception('Could not update your password. Sorries.');
-	}
+    // change their pass
+    $pass_hash = to_hash($new_pass);
+    user_update_pass($pdo, $login->user_id, $pass_hash);
 
-	setcookie ("token", "", time() - 3600);
+    // clear the existing token
+    setcookie("token", "", time() - 3600);
 
-	//tell it to the world
-	echo 'message=Your password has been changed successfully!';
+    // tell it to the world
+    echo 'message=Your password has been changed successfully!';
+} catch (Exception $e) {
+    $error = $e->getMessage();
+    echo "error=$error";
 }
-catch(Exception $e){
-	echo 'error='.$e->getMessage();
-}
-
-
-?>

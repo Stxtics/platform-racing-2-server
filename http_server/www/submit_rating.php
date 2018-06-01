@@ -1,169 +1,115 @@
 <?php
 
-require_once('../fns/all_fns.php');
+header("Content-type: text/plain");
 
-$level_id = find('level_id');
-$new_rating = find('rating');
+require_once HTTP_FNS . '/all_fns.php';
+require_once QUERIES_DIR . '/levels/level_check_if_creator.php';
+require_once QUERIES_DIR . '/levels/level_select.php';
+require_once QUERIES_DIR . '/levels/level_update_rating.php';
+require_once QUERIES_DIR . '/ratings/rating_insert.php';
+require_once QUERIES_DIR . '/ratings/rating_select.php';
 
-$level_id = addslashes($level_id);
-
-$time = time();
+$time = (int) time();
+$level_id = (int) $_POST['level_id'];
 $old_weight = 0;
 $weight = 1;
 $old_rating = 0;
+$new_rating = (int) $_POST['rating'];
 
 $ip = get_ip();
 
-$safe_ip = addslashes($ip);
-$safe_new_rating = addslashes($new_rating);
+try {
+    // POST check
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        throw new Exception('Invalid request method.');
+    }
 
-try{
-	//error check
-	$new_rating = round($new_rating);
-	if(is_nan($new_rating) || $new_rating < 1 || $new_rating > 5){
-		throw new Exception('Could not vote $new_rating.');
-	}
+    // ref check
+    require_trusted_ref('rate levels');
 
-	//connect to the db
-	$db = new DB();
+    // rate limiting
+    rate_limit('submit-rating-'.$ip, 5, 2);
 
-	//check thier login
-	$user_id = token_login($db);
+    // sanity check: is the rating valid?
+    $new_rating = round($new_rating);
+    if (is_nan($new_rating) || $new_rating < 1 || $new_rating > 5) {
+        throw new Exception("Could not vote $new_rating.");
+    }
 
-	//see if they made this level
-	$result = $db->query("select level_id
-									from pr2_levels
-									where user_id = '$user_id'
-									and level_id = '$level_id'
-									limit 0, 1");
-	if(!$result){
-		throw new Exception('Could not check your voting status.');
-	}
-	if($result->num_rows > 0){
-		throw new Exception('You can\'t vote on yer own level, matey!');
-	}
+    // connect
+    $pdo = pdo_connect();
 
-	//get their voting weight
-	$rank_result = $db->query("select rank
-											from pr2
-											where user_id = '$user_id'
-											limit 0, 1");
-	if(!$rank_result){
-		throw new Exception('Could not get your rank.');
-	}
-	if($rank_result->num_rows > 0){
-		$rank_row = $rank_result->fetch_object();
-		$weight = $rank_row->rank;
-	}
-	if($weight > 10) {
-		$weight = 10;
-	}
-	if($weight < 1) {
-		$weight = 1;
-	}
+    // check their login
+    $user_id = token_login($pdo, false);
 
-	//see if they have voted on this level before
-	$vote_result = $db->query("select rating, weight
-										from pr2_ratings
-										where user_id = '$user_id'
-										and level_id = '$level_id'
-										limit 0, 1");
-	if(!$vote_result){
-		throw new Exception('Could not check to see if you have voted on this course before');
-	}
+    // rate limiting
+    rate_limit('submit-rating-'.$user_id, 5, 2);
 
-	if($vote_result->num_rows <= 0) {
-		$vote_result = $db->query("select rating, weight
-											from pr2_ratings
-											where ip = '$safe_ip'
-											and level_id = '$level_id'
-											limit 0, 1");
-		if(!$vote_result){
-			throw new Exception('Could not check to see if you have ip voted on this course before');
-		}
-	}
+    // see if they made the level
+    $is_creator = level_check_if_creator($pdo, $user_id, $level_id);
+    if ($is_creator === true) {
+        throw new Exception("You can't vote on yer own level, matey!");
+    }
 
-	//if they have, they must wait
-	if($vote_result->num_rows > 0){
-		throw new Exception('You have already voted on this level. You can vote on it again in a week.');
-	}
+    // get their voting weight
+    $user_pr2 = pr2_select($pdo, $user_id);
+    $weight = $user_pr2->rank;
+    if ($weight > 10) {
+        $weight = 10;
+    }
+    if ($weight < 1) {
+        $weight = 1;
+    }
 
-	//if they haven't add their vote
-	else{
-		$result = $db->query("insert into pr2_ratings
-										set rating = '$safe_new_rating',
-											user_id = '$user_id',
-											level_id = '$level_id',
-											weight = '$weight',
-											time = '$time',
-											ip = '$safe_ip'");
-		if(!$result){
-			throw new Exception('Could not add your vote');
-		}
-	}
+    // see if they have voted on this level recently
+    $prev_vote = rating_select($pdo, $level_id, $user_id, $ip);
+    if ($prev_vote) {
+        throw new Exception('You have recently voted on this level. You can vote on it again in a week.');
+    }
 
-	//get the average rating and votes so I can do some math
-	$result = $db->query("select rating, votes
-									from pr2_levels
-									where level_id = '$level_id'
-									limit 0, 1");
-	if(!$result){
-		throw new Exception('Could not retireve old rating.');
-	}
-	if($result->num_rows <= 0){
-		throw new Exception('Course not found. This is probably because the level has been updated since you downloaded it.');
-	}
-	$row = $result->fetch_object();
-	$average_rating = $row->rating;
-	$votes = $row->votes;
+    // if they haven't voted, cast their vote
+    rating_insert($pdo, $level_id, $new_rating, $user_id, $weight, $time, $ip);
 
-	//do some math!
-	$total_rating = $average_rating * $votes;
-	$total_rating -= $weight * $old_rating;
-	$total_rating += $weight * $new_rating;
-	$votes += $weight - $old_weight;
-	if($votes <= 0) {
-		$new_average_rating = 0;
-	}
-	else {
-		$new_average_rating = $total_rating / $votes;
-	}
+    // get the average rating and votes for some math
+    $level = level_select($pdo, $level_id);
+    $average_rating = $level->rating;
+    $votes = $level->votes;
 
-	if($new_average_rating > 5) {
-		$new_average_rating = 0;
-		$votes = 0;
-	}
+    // quick maths
+    $total_rating = $average_rating * $votes;
+    $total_rating -= $weight * $old_rating;
+    $total_rating += $weight * $new_rating;
+    $votes += $weight - $old_weight;
+    if ($votes <= 0) {
+        $new_average_rating = 0;
+    } else {
+        $new_average_rating = $total_rating / $votes;
+    }
 
-	//put the final average back into the level
-	if(!is_nan($new_average_rating)){
-		$result = $db->query("update pr2_levels
-										set rating = '$new_average_rating',
-											votes = '$votes'
-										where level_id = '$level_id'
-										limit 1");
-		if(!$result){
-			throw new Exception('Could not update rating.');
-		}
-	}
+    if ($new_average_rating > 5) {
+        $new_average_rating = 0;
+        $votes = 0;
+    }
 
-	//echo a message back
-	echo 'message=';
-	$old = round($average_rating, 2);
-	$new = round($new_average_rating, 2);
-	if($old == 0){
-		$old = 'none';
-	}
-	if($old_rating == 0){
-		echo 'Thank you for voting! Your vote of '.$new_rating.' changed the average rating from '
-		.$old.' to '.$new.'.';
-	}else{
-		echo 'Thank you for voting! You changed your vote from '.$old_rating.' to '
-		.$new_rating.', which changed the average rating from '.$old.' to '.$new.'.';
-	}
+    // put the final average back into the level
+    if (!is_nan($new_average_rating)) {
+        level_update_rating($pdo, $level_id, $new_average_rating, $votes);
+    }
+
+    // echo a message back
+    echo 'message=Thank you for voting! ';
+    $old = round($average_rating, 2);
+    $new = round($new_average_rating, 2);
+    if ($old == 0) {
+        $old = 'none';
+    }
+    if ($old_rating == 0) {
+        echo "Your vote of $new_rating changed the average rating from $old to $new.";
+    } else {
+        echo "You changed your vote from $old_rating to $new_rating, "
+            ."which changed the average rating from $old to $new.";
+    }
+} catch (Exception $e) {
+    $error = $e->getMessage();
+    echo "error=$error";
 }
-catch(Exception $e){
-	echo 'error='.$e->getMessage();
-}
-
-
-?>

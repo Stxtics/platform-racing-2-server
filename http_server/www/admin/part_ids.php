@@ -1,18 +1,21 @@
 <?php
 
-require_once('../../fns/all_fns.php');
-require_once('../../fns/output_fns.php');
+require_once HTTP_FNS . '/all_fns.php';
+require_once HTTP_FNS . '/output_fns.php';
 
 try {
-	
-	//connect
-	$db = new DB();
+    // rate limiting
+    rate_limit('part-ids-'.$ip, 60, 5);
+    rate_limit('part-ids-'.$ip, 10, 1);
 
-	//make sure you're an admin
-	$admin = check_moderator($db, true, 3);
-	
-	output_header('PR2 Part IDs', true, true);
-	echo '<pre>Platform Racing 2 Part Codes
+    //connect
+    $pdo = pdo_connect();
+
+    //make sure you're an admin
+    $admin = check_moderator($pdo, false, 3);
+
+    output_header('PR2 Part IDs', true, true);
+    echo '<pre>Platform Racing 2 Part Codes
 
 -- Hats --
 1 - None
@@ -70,7 +73,7 @@ try {
 36 - Reindeer
 37 - Crocodile
 38 - Valentine
-39 - Rabbit
+39 - Bunny
 40+ - *BLANK*
 
 -- Bodies --
@@ -112,7 +115,7 @@ try {
 36 - Reindeer
 37 - Crocodile
 38 - Valentine
-39 - Rabbit
+39 - Bunny
 40+ - *BLANK*
 
 -- Feet --
@@ -154,7 +157,7 @@ try {
 36 - Reindeer
 37 - Crocodile
 38 - Valentine
-39 - Rabbit
+39 - Bunny
 40+ - *BLANK*
 
 -- Full Sets --
@@ -192,15 +195,9 @@ Hats: 15+
 Heads: 40+
 Bodies: 33, 40+
 Feet: 31-33, 40+</pre>';
-
-	output_footer();
-
+} catch (Exception $e) {
+    output_header('Error');
+    echo 'Error: ' . $e->getMessage();
+} finally {
+    output_footer();
 }
-
-catch (Exception $e) {
-	output_header('Error');
-	echo 'Error: ' . $e->getMessage();
-	output_footer();
-}
-
-?>
