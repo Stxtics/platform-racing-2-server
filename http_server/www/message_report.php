@@ -1,74 +1,89 @@
 <?php
+require_once('../fns/all_fns.php');
 
-header("Content-type: text/plain");
+$message_id = $_POST['message_id'];
 
-require_once HTTP_FNS . '/all_fns.php';
-require_once QUERIES_DIR . '/messages_reported/messages_reported_check_existing.php';
-require_once QUERIES_DIR . '/messages_reported/messages_reported_insert.php';
-require_once QUERIES_DIR . '/messages/message_select.php';
-
-$message_id = (int) $_POST['message_id'];
-$time = (int) time();
 $ip = get_ip();
+$time = time();
 
-try {
-    // POST check
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        throw new Exception('Invalid request method.');
-    }
+$safe_message_id = addslashes($message_id);
+$safe_reporter_ip = addslashes($ip);
+$safe_time = addslashes($time);
 
-    // rate limiting
-    rate_limit('message-report-'.$ip, 5, 2, "Please wait at least 5 seconds before trying to report another PM.");
-    rate_limit('message-report-'.$ip, 60, 5);
 
-    // connect
-    $pdo = pdo_connect();
-
-    // check their login
-    $user_id = token_login($pdo, false);
-    $power = user_select_power($pdo, $user_id);
-    if ($power <= 0) {
-        throw new Exception(
-            "Guests can't use the private messaging system. ".
-            "To access this feature, please create your own account."
-        );
-    }
-
-    // more rate limiting
-    rate_limit('message-report-'.$user_id, 5, 2, "Please wait at least 5 seconds before trying to report another PM.");
-    rate_limit('message-report-'.$user_id, 60, 5);
-
-    // check if the message was already reported
-    $repeat = messages_reported_check_existing($pdo, $message_id);
-    if ($repeat === true) {
-        throw new Exception("It seems like you've already reported this message.");
-    }
-
-    // make sure the message exists and that this user is the recipient of the message
-    $message = message_select($pdo, $message_id, true);
-    if ($message === false) {
-        throw new Exception("The message you tried to report ($message_id) doesn't exist.");
-    }
-    if ($message->to_user_id != $user_id) {
-        throw new Exception('This message was not sent to you.');
-    }
-
-    // insert the message into the reported messages table
-    messages_reported_insert(
-        $pdo,
-        $message->to_user_id,
-        $message->from_user_id,
-        $ip,
-        $message->ip,
-        $message->time,
-        time(),
-        $message_id,
-        $message->message
-    );
-
-    // tell it to the world
-    echo 'message=The message was reported successfully!';
-} catch (Exception $e) {
-    $error = $e->getMessage();
-    echo "error=$error";
+try{
+	
+	$db = new DB();
+	
+	//check their login
+	$user_id = token_login($db, false);
+	
+	
+	//make sure the message isn't already reported
+	$result = $db->query("SELECT COUNT(*)
+									AS count
+									FROM messages_reported
+								 	WHERE message_id = '$safe_message_id'
+									");
+	$row = $result->fetch_object();
+	if(!$result) {
+		throw new Exception('Could not check if the message was already reported.');
+	}
+	if($row->count !== 0) {
+		throw new Exception('It seems that you\'ve already reported this message.');
+	}
+	
+	//pull the selected message from the db
+	$result = $db->query("SELECT *
+								 	FROM messages
+									WHERE message_id = '$safe_message_id'
+									LIMIT 0, 1");
+	if(!$result){
+		throw new Exception('Could not retrieve message.');
+	}
+	if($result->num_rows <= 0) {
+		throw new Exception("The message you tried to report ($safe_message_id) doesn\'t exist.");
+	}
+	
+	
+	//make sure this user is the recipient of this message
+	$row = $result->fetch_object();
+	if($row->to_user_id != $user_id) {
+		throw new Exception('This message was not sent to you.');
+	}
+	
+	
+	//insert the message into the reported messages table
+	$safe_to_user_id = addslashes($row->to_user_id);
+	$safe_from_user_id = addslashes($row->from_user_id);
+	$safe_message = addslashes($row->message);
+	$safe_sent_time = addslashes($row->time);
+	$safe_from_ip = addslashes( $row->ip );
+	
+	$result = $db->query("INSERT INTO messages_reported
+								 	SET to_user_id = '$safe_to_user_id',
+										from_user_id = '$safe_from_user_id',
+										reporter_ip = '$safe_reporter_ip',
+										from_ip = '$safe_from_ip',
+										sent_time = '$safe_sent_time',
+										reported_time = '$safe_time',
+										message_id = '$safe_message_id',
+										message = '$safe_message'");
+	
+	if(!$result){
+		throw new Exception('Could not record the reported message.');
+	}
+	
+	
+	
+	
+	
+	//tell it to the world
+	echo 'message=The message was reported successfully!';
 }
+
+catch(Exception $e){
+	echo 'error='.($e->getMessage());
+}
+
+?>
